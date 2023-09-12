@@ -1,5 +1,6 @@
 use anyhow::Result;
 use nanoserde::{DeJson, SerJson};
+use native_dialog::{MessageDialog, MessageType};
 use std::collections::HashMap;
 use std::{thread::sleep, time::Duration};
 use ureq::Agent;
@@ -34,6 +35,7 @@ pub fn auth(
             Err(_) => microsoft_auth = device_flow(client.clone())?,
         }
     } else {
+        println!("no refresh token present. :/");
         microsoft_auth = device_flow(client.clone())?;
     }
 
@@ -95,14 +97,17 @@ pub fn auth(
     // we also need the username and uuid.
     let profile_data: MinecraftProfile = DeJson::deserialize_json(
         &client
-            .post("https://api.minecraftservices.com/authentication/login_with_xbox")
+            .get("https://api.minecraftservices.com/minecraft/profile")
             .set(
                 "Authorization",
                 &format!("Bearer {}", minecraft_auth.access_token),
             )
-            .call()?
+            .call()
+            .unwrap()
             .into_string()?,
     )?;
+
+    println!("logged in as {}.", profile_data.name);
 
     Ok((
         profile_data.name,
@@ -113,6 +118,8 @@ pub fn auth(
 }
 
 fn device_flow(client: Agent) -> Result<DeviceSuccess> {
+    println!("starting device flow procedure.");
+
     // gotta ask for a code to login externally.
     let response: DeviceResponse = DeJson::deserialize_json(
         &client
@@ -126,11 +133,20 @@ fn device_flow(client: Agent) -> Result<DeviceSuccess> {
 
     let mut successful_auth: Option<DeviceSuccess> = None;
 
-    println!("{}\n{}", response.user_code, response.verification_uri);
-
+    // docs say this crashes on macos IDK
+    MessageDialog::new()
+        .set_type(MessageType::Info)
+        .set_title("please auth to microsoft... :/")
+        .set_text(&format!(
+            "login to: {}\nusing code: {}",
+            response.verification_uri, response.user_code
+        ))
+        .show_alert()
+        .unwrap();
     while successful_auth.is_none() {
         // now we gotta poll this until it's authed.
         sleep(Duration::from_secs(response.interval));
+        println!("polling...");
         let response = client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
             .send_form(&[
@@ -141,6 +157,7 @@ fn device_flow(client: Agent) -> Result<DeviceSuccess> {
         match response {
             // if the user is successfully authenticated.
             Ok(response) => {
+                println!("authenticated to microsoft!");
                 successful_auth = DeJson::deserialize_json(&response.into_string()?)?;
             }
             // if (most probably) the user hasn't authenticated.

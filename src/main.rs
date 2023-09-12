@@ -13,6 +13,7 @@ const MOJANG_META: &str = "https://piston-meta.mojang.com/mc/game/version_manife
 
 fn main() -> Result<()> {
     // setup http client.
+    println!("setting up ureq.");
     let client = ureq::builder()
         .user_agent(concat!(
             env!("CARGO_PKG_NAME"),
@@ -43,22 +44,29 @@ fn main() -> Result<()> {
         }
     }
     let version = minecraft_version.unwrap();
+    println!("version: {}.", version_string);
 
     // this panics because we need a directory.
     let project_dir = directories::ProjectDirs::from("", "piuvas", "smol launcher").unwrap();
     let data = fs::read_to_string(project_dir.data_dir().join("data.json")).unwrap_or_default();
     let mut app_data: AppData = DeJson::deserialize_json(&data).unwrap_or_default();
 
+    let data_dir = project_dir.data_dir();
+    let data_dir_string = data_dir.display();
+
     let mut setup_handle = None;
 
     // setup shouldn't run if it's ran before. >;]
     if !app_data.versions.contains(&version_string) {
+        println!("installing version...");
         let client = client.clone();
         let project_dir = project_dir.clone();
         setup_handle = Some(thread::spawn(move || {
-            setup::setup(version, project_dir.cache_dir().to_path_buf(), client)
+            setup::setup(version, project_dir.data_dir().to_path_buf(), client)
         }));
-        app_data.versions.push(version_string);
+        app_data.versions.push(version_string.clone());
+    } else {
+        println!("version is already installed.");
     }
 
     // authenticates for the launcher data.
@@ -66,15 +74,66 @@ fn main() -> Result<()> {
     app_data.refresh_token = Some(refresh_token);
 
     if let Some(handle) = setup_handle {
-        handle.join().unwrap()?;
+        app_data.classpath = Some(handle.join().unwrap()?);
     }
 
+    let classpath = app_data
+        .classpath
+        .as_ref()
+        .expect("we should already have a classpath by now!!!");
+
     //let's write that data back.
-    let mut data_file = fs::File::open(project_dir.data_dir().join("data.json"))?;
+    fs::create_dir_all(project_dir.data_dir())?;
+    let data_file_path = project_dir.data_dir().join("data.json");
+    let mut data_file = fs::File::create(data_file_path)?;
     write!(data_file, "{}", app_data.serialize_json())?;
 
     // starts the game!
-    Command::new("java").arg("-version").spawn().expect("woops");
+    println!("starting...");
+    let mut binding = Command::new("java");
+    let mut command = binding.args([
+        &format!("-Djava.library.path={}/libraries", data_dir_string),
+        "-Dminecraft.launcher.brand=smol.",
+        concat!("-Dminecraft.launcher.version=", env!("CARGO_PKG_VERSION")),
+        "-cp",
+        &classpath,
+        "-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump",
+    ]);
+
+    if cfg!(target_os = "macos") {
+        command = command.arg("-XstartOnFirstThread");
+    } else if cfg!(target_os = "windows") {
+        command = command.args(["-Dos.name=Windows 10", "-Dos.version=10.0"])
+    }
+
+    command = command.arg("net.minecraft.client.main.Main");
+
+    // game args...
+    command = command.args([
+        "--username",
+        &username,
+        "--version",
+        &version_string,
+        "--gameDir",
+        &format!("{}/.minecraft", data_dir_string),
+        "--assetsDir",
+        &format!("{}/assets", data_dir_string),
+        "--assetIndex",
+        &format!("{}", version_string),
+        "--uuid",
+        &uuid,
+        "--accessToken",
+        &access_token,
+        "--userType",
+        "msa",
+        "--versionType",
+        match snapshot {
+            true => "snapshot",
+            false => "release",
+        },
+    ]);
+    command.current_dir(format!("{}/.minecraft", data_dir_string));
+    command.spawn()?;
 
     Ok(())
 }
@@ -99,5 +158,6 @@ pub struct Version {
 #[derive(DeJson, SerJson, Default)]
 struct AppData {
     versions: Vec<String>,
+    classpath: Option<String>,
     refresh_token: Option<String>,
 }
