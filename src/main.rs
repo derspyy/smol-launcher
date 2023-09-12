@@ -96,7 +96,7 @@ fn main() -> Result<()> {
         "-Dminecraft.launcher.brand=smol.",
         concat!("-Dminecraft.launcher.version=", env!("CARGO_PKG_VERSION")),
         "-cp",
-        &classpath,
+        classpath,
         "-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump",
     ]);
 
@@ -119,7 +119,7 @@ fn main() -> Result<()> {
         "--assetsDir",
         &format!("{}/assets", data_dir_string),
         "--assetIndex",
-        &format!("{}", version_string),
+        &version_string,
         "--uuid",
         &uuid,
         "--accessToken",

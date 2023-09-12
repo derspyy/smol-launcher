@@ -2,7 +2,7 @@ use super::Version;
 
 use anyhow::Result;
 use nanoserde::DeJson;
-use sha1_smol::{Digest, Sha1};
+use sha1_smol::Sha1;
 use std::collections::HashMap;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
@@ -18,7 +18,7 @@ pub fn setup(version: Version, data_dir: PathBuf, client: Agent) -> Result<Strin
     #[cfg(target_os = "windows")]
     let os = Os::Windows;
     #[cfg(target_os = "macos")]
-    let os = Os::OSX;
+    let os = Os::Osx;
 
     let mut handles = Vec::new();
 
@@ -185,7 +185,7 @@ struct OsStruct {
 #[derive(DeJson, PartialEq)]
 enum Os {
     #[nserde(rename = "osx")]
-    OSX,
+    Osx,
     #[nserde(rename = "windows")]
     Windows,
     #[nserde(rename = "linux")]
