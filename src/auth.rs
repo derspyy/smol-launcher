@@ -1,9 +1,9 @@
 use anyhow::Result;
 use nanoserde::{DeJson, SerJson};
 use native_dialog::{MessageDialog, MessageType};
+use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
 use std::{thread::sleep, time::Duration};
-use ureq::Agent;
 
 const APPLICATION_ID: &str = "e8eab6e8-494c-4c9c-a800-2836b8468fda";
 
@@ -11,9 +11,9 @@ const APPLICATION_ID: &str = "e8eab6e8-494c-4c9c-a800-2836b8468fda";
 // https://wiki.vg/Microsoft_Authentication_Scheme
 // this is hell.
 
-pub fn auth(
+pub async fn auth(
     refresh_token: Option<String>,
-    client: Agent,
+    client: Client,
 ) -> Result<(String, String, String, String)> {
     let microsoft_auth: DeviceSuccess;
 
@@ -22,21 +22,23 @@ pub fn auth(
         println!("refresh token found.");
         let refresh_response = client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-            .send_form(&[
+            .form(&[
                 ("client_id", APPLICATION_ID),
                 ("scope", "XboxLive.signin offline_access"),
                 ("refresh_token", &token),
                 ("grant_type", "refresh_token"),
-            ]);
+            ])
+            .send()
+            .await;
         match refresh_response {
             Ok(response) => {
-                microsoft_auth = DeJson::deserialize_json(&response.into_string()?)?;
+                microsoft_auth = DeJson::deserialize_json(&response.text().await?)?;
             }
-            Err(_) => microsoft_auth = device_flow(client.clone())?,
+            Err(_) => microsoft_auth = device_flow(client.clone()).await?,
         }
     } else {
         println!("no refresh token present. :/");
-        microsoft_auth = device_flow(client.clone())?;
+        microsoft_auth = device_flow(client.clone()).await?;
     }
 
     // most of this is annoying xbox auth.
@@ -55,8 +57,11 @@ pub fn auth(
     let xbox_auth: XboxAuthResponse = DeJson::deserialize_json(
         &client
             .post("https://user.auth.xboxlive.com/user/authenticate")
-            .send_string(&body.serialize_json())?
-            .into_string()?,
+            .body(body.serialize_json())
+            .send()
+            .await?
+            .text()
+            .await?,
     )?;
 
     body = XboxAuth {
@@ -74,37 +79,44 @@ pub fn auth(
     let xsts_auth: XboxAuthResponse = DeJson::deserialize_json(
         &client
             .post("https://xsts.auth.xboxlive.com/xsts/authorize")
-            .send_string(&body.serialize_json())?
-            .into_string()?,
+            .body(body.serialize_json())
+            .send()
+            .await?
+            .text()
+            .await?,
     )?;
 
     // NOWS the cool shit.
     let minecraft_auth: MinecraftResponse = DeJson::deserialize_json(
         &client
             .post("https://api.minecraftservices.com/authentication/login_with_xbox")
-            .send_string(
-                &MinecraftAuth {
+            .body(
+                MinecraftAuth {
                     identity_token: format!(
                         "XBL3.0 x={};{}",
                         xsts_auth.display_claims["xui"][0]["uhs"], xsts_auth.token
                     ),
                 }
                 .serialize_json(),
-            )?
-            .into_string()?,
+            )
+            .send()
+            .await?
+            .text()
+            .await?,
     )?;
 
     // we also need the username and uuid.
     let profile_data: MinecraftProfile = DeJson::deserialize_json(
         &client
             .get("https://api.minecraftservices.com/minecraft/profile")
-            .set(
+            .header(
                 "Authorization",
                 &format!("Bearer {}", minecraft_auth.access_token),
             )
-            .call()
-            .unwrap()
-            .into_string()?,
+            .send()
+            .await?
+            .text()
+            .await?,
     )?;
 
     println!("logged in as {}.", profile_data.name);
@@ -117,18 +129,21 @@ pub fn auth(
     ))
 }
 
-fn device_flow(client: Agent) -> Result<DeviceSuccess> {
+async fn device_flow(client: Client) -> Result<DeviceSuccess> {
     println!("starting device flow procedure.");
 
     // gotta ask for a code to login externally.
     let response: DeviceResponse = DeJson::deserialize_json(
         &client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
-            .send_form(&[
+            .form(&[
                 ("client_id", APPLICATION_ID),
                 ("scope", "XboxLive.signin offline_access"),
-            ])?
-            .into_string()?,
+            ])
+            .send()
+            .await?
+            .text()
+            .await?,
     )?;
 
     let mut successful_auth: Option<DeviceSuccess> = None;
@@ -149,32 +164,27 @@ fn device_flow(client: Agent) -> Result<DeviceSuccess> {
         println!("polling...");
         let response = client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-            .send_form(&[
+            .form(&[
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
                 ("client_id", APPLICATION_ID),
                 ("device_code", &response.device_code),
-            ]);
-        match response {
-            // if the user is successfully authenticated.
-            Ok(response) => {
+            ])
+            .send()
+            .await?;
+        // if the user is successfully authenticated.
+        match response.status() {
+            StatusCode::OK => {
                 println!("authenticated to microsoft!");
-                successful_auth = DeJson::deserialize_json(&response.into_string()?)?;
+                successful_auth = DeJson::deserialize_json(&response.text().await?)?;
             }
-            // if (most probably) the user hasn't authenticated.
-            Err(error) => match error {
-                ureq::Error::Status(_, response) => {
-                    let response_json: DeviceError =
-                        DeJson::deserialize_json(&response.into_string()?)?;
-                    match response_json.error {
-                        AuthError::AuthorizationPending => {}
-                        AuthError::AuthorizationDeclined => todo!(),
-                        AuthError::BadVerificationCode => todo!(),
-                        AuthError::ExpiredToken => todo!(),
-                    }
+            StatusCode::FORBIDDEN => {
+                let response: DeviceError = DeJson::deserialize_json(&response.text().await?)?;
+                match response.error {
+                    AuthError::AuthorizationPending => {}
+                    _ => todo!(),
                 }
-                // actual error.
-                ureq::Error::Transport(_) => todo!(),
-            },
+            }
+            _ => todo!(),
         }
     }
 

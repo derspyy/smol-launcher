@@ -5,25 +5,25 @@ use anyhow::Result;
 use std::fs;
 use std::io::Write;
 use std::process::Command;
-use std::thread;
 
 use nanoserde::{DeJson, SerJson};
 
 const MOJANG_META: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // setup http client.
     println!("setting up ureq.");
-    let client = ureq::builder()
+    let client = reqwest::Client::builder()
         .user_agent(concat!(
             env!("CARGO_PKG_NAME"),
             "/",
             env!("CARGO_PKG_VERSION")
         ))
-        .build();
+        .build()?;
 
     let version_manifest: VersionManifest =
-        DeJson::deserialize_json(&client.get(MOJANG_META).call()?.into_string()?)?;
+        DeJson::deserialize_json(&client.get(MOJANG_META).send().await?.text().await?)?;
 
     let snapshot = false;
     // this version is the one the user wants to play.
@@ -61,20 +61,23 @@ fn main() -> Result<()> {
         println!("installing version...");
         let client = client.clone();
         let project_dir = project_dir.clone();
-        setup_handle = Some(thread::spawn(move || {
-            setup::setup(version, project_dir.data_dir().to_path_buf(), client)
-        }));
+        setup_handle = Some(tokio::spawn(setup::setup(
+            version,
+            project_dir.data_dir().to_path_buf(),
+            client,
+        )));
         app_data.versions.push(version_string.clone());
     } else {
         println!("version is already installed.");
     }
 
     // authenticates for the launcher data.
-    let (username, uuid, access_token, refresh_token) = auth::auth(app_data.refresh_token, client)?;
+    let (username, uuid, access_token, refresh_token) =
+        auth::auth(app_data.refresh_token, client).await?;
     app_data.refresh_token = Some(refresh_token);
 
     if let Some(handle) = setup_handle {
-        app_data.classpath = Some(handle.join().unwrap()?);
+        app_data.classpath = Some(handle.await.unwrap()?);
     }
 
     let classpath = app_data
@@ -87,6 +90,12 @@ fn main() -> Result<()> {
     let data_file_path = project_dir.data_dir().join("data.json");
     let mut data_file = fs::File::create(data_file_path)?;
     write!(data_file, "{}", app_data.serialize_json())?;
+
+    // makes sure there's a minecraft folder.
+    let dot_minecraft = data_dir.join(".minecraft");
+    if !dot_minecraft.exists() {
+        fs::create_dir(dot_minecraft)?;
+    }
 
     // starts the game!
     println!("starting...");
@@ -132,6 +141,7 @@ fn main() -> Result<()> {
             false => "release",
         },
     ]);
+
     command.current_dir(format!("{}/.minecraft", data_dir_string));
     command.spawn()?;
 

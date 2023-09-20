@@ -1,18 +1,18 @@
 use super::Version;
 
 use anyhow::Result;
+use futures::future::try_join_all;
 use nanoserde::DeJson;
+use reqwest::Client as HttpClient;
 use sha1_smol::Sha1;
 use std::collections::HashMap;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::PathBuf;
-use std::thread;
-use ureq::Agent;
 
-pub fn setup(version: Version, data_dir: PathBuf, client: Agent) -> Result<String> {
+pub async fn setup(version: Version, data_dir: PathBuf, client: HttpClient) -> Result<String> {
     let version_data: VersionData =
-        DeJson::deserialize_json(&client.get(&version.url).call()?.into_string()?)?;
+        DeJson::deserialize_json(&client.get(&version.url).send().await?.text().await?)?;
     #[cfg(target_os = "linux")]
     let os = Os::Linux;
     #[cfg(target_os = "windows")]
@@ -20,7 +20,7 @@ pub fn setup(version: Version, data_dir: PathBuf, client: Agent) -> Result<Strin
     #[cfg(target_os = "macos")]
     let os = Os::Osx;
 
-    let mut handles = Vec::new();
+    let mut futures = Vec::new();
 
     // gotta return the classpaths...
     let mut classpath = String::new();
@@ -39,14 +39,12 @@ pub fn setup(version: Version, data_dir: PathBuf, client: Agent) -> Result<Strin
             && (library.rules.is_none() || library.rules.is_some_and(|x| x[0].os.name == os))
         {
             let client = client.clone();
-            handles.push(thread::spawn(|| {
-                download(
-                    library.downloads.artifact.url,
-                    library.downloads.artifact.sha1,
-                    path,
-                    client,
-                )
-            }));
+            futures.push(tokio::spawn(download(
+                library.downloads.artifact.url,
+                library.downloads.artifact.sha1,
+                path,
+                client,
+            )));
         } else {
             let path_string = path.display();
             classpath.push_str(&path_string.to_string());
@@ -54,17 +52,43 @@ pub fn setup(version: Version, data_dir: PathBuf, client: Agent) -> Result<Strin
         }
     }
 
-    for handle in handles {
-        handle.join().unwrap()?;
+    // downloads the client.
+    // you need this format!() because set_extension() doesn't care about dots in the filename.
+    let path = data_dir
+        .join("versions")
+        .join(format!("{}.jar", version.id));
+    if !path.exists() {
+        futures.push(tokio::spawn(download(
+            version_data.downloads.client.url,
+            version_data.downloads.client.sha1,
+            path,
+            client.clone(),
+        )));
+    } else {
+        let path_string = path.display();
+        classpath.push_str(&path_string.to_string());
+        classpath.push(separator);
     }
 
-    let mut handles = Vec::new();
+    let results = try_join_all(futures).await?;
+
+    for result in results {
+        let path = result?;
+        classpath.push_str(path.to_str().unwrap());
+        classpath.push(separator);
+    }
+
+    classpath.pop();
+
+    let mut inputs = Vec::new();
 
     // downloads the assets.
     let asset_index_string = client
         .get(&version_data.asset_index.url)
-        .call()?
-        .into_string()?;
+        .send()
+        .await?
+        .text()
+        .await?;
     let asset_index: Assets = DeJson::deserialize_json(&asset_index_string)?;
 
     // we need an asset index file.
@@ -91,57 +115,48 @@ pub fn setup(version: Version, data_dir: PathBuf, client: Agent) -> Result<Strin
                 two, data.hash
             );
             let client = client.clone();
-            download(url, data.hash, path, client)?;
+            inputs.push((url, data.hash, path, client));
         }
     }
 
-    // downloads the client.
-    // you need this format!() because set_extension() doesn't care about dots in the filename.
-    let path = data_dir
-        .join("versions")
-        .join(format!("{}.jar", version.id));
-    if !path.exists() {
-        handles.push(thread::spawn(|| {
-            download(
-                version_data.downloads.client.url,
-                version_data.downloads.client.sha1,
-                path,
-                client,
-            )
-        }));
-    } else {
-        let path_string = path.display();
-        classpath.push_str(&path_string.to_string());
-        classpath.push(separator);
+    // batch downloads.
+    let mut handles = Vec::new();
+    for (url, hash, path, client) in inputs {
+        let handle = tokio::spawn(download(url, hash, path, client));
+        handles.push(handle);
+        if handles.len() == 1000 {
+            try_join_all(&mut handles).await?;
+            handles.clear();
+        }
     }
-
-    for handle in handles {
-        classpath.push_str(&handle.join().unwrap()?.to_string_lossy());
-        classpath.push(separator);
-    }
-
-    classpath.pop();
+    try_join_all(handles).await?;
 
     println!("finished setup.");
 
     Ok(classpath)
 }
 
-fn download(url: String, hash: String, mut path: PathBuf, client: Agent) -> Result<PathBuf> {
+async fn download(
+    url: String,
+    hash: String,
+    mut path: PathBuf,
+    client: HttpClient,
+) -> Result<PathBuf> {
     let mut hasher = Sha1::new();
     println!("downloading file: {} -> {}", url, path.display());
     let full_path = path.clone();
     path.pop();
     create_dir_all(path)?;
-    let mut new_file = File::create(&full_path)?;
-    let mut bytes: Vec<u8> = Vec::new();
-    client
-        .get(&url)
-        .call()?
-        .into_reader()
-        .read_to_end(&mut bytes)?;
+    let bytes = client.get(&url).send().await?.bytes().await?;
+    drop(client);
     hasher.update(&bytes);
-    assert_eq!(hasher.digest().to_string(), hash);
+    assert_eq!(
+        hasher.digest().to_string(),
+        hash,
+        "{} failed integrity check.",
+        url
+    );
+    let mut new_file = File::create(&full_path)?;
     new_file.write_all(&bytes)?;
     Ok(full_path)
 }

@@ -7,8 +7,10 @@ edition = "2021"
 
 [dependencies]
 nanoserde = "0.1"
-ureq = "2.7"
 directories = "5.0"
 anyhow = "1.0"
 native-dialog = "0.6"
 sha1_smol = "1.0"
+tokio = { version = "1.32", features = ["rt-multi-thread", "macros", "sync"] }
+reqwest = "0.11"
+futures = "0.3"
