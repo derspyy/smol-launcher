@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use nanoserde::{DeJson, SerJson};
 use native_dialog::{MessageDialog, MessageType};
 use reqwest::{Client, StatusCode};
@@ -181,10 +181,10 @@ async fn device_flow(client: Client) -> Result<DeviceSuccess> {
                 let response: DeviceError = DeJson::deserialize_json(&response.text().await?)?;
                 match response.error {
                     AuthError::AuthorizationPending => {}
-                    _ => todo!(),
+                    _ => return Err(anyhow!("error authenticating to microsoft.")),
                 }
             }
-            _ => todo!(),
+            _ => return Err(anyhow!("error authenticating to microsoft.")),
         }
     }
 
