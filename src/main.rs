@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
             minecraft_version = Some(version)
         }
     }
-    let version = minecraft_version.unwrap();
+    let version = minecraft_version.expect("no minecraft version??");
     println!("version: {}.", version_string);
 
     // this panics because we need a directory.

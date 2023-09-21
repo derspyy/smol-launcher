@@ -156,8 +156,7 @@ async fn device_flow(client: Client) -> Result<DeviceSuccess> {
             "login to: {}\nusing code: {}",
             response.verification_uri, response.user_code
         ))
-        .show_alert()
-        .unwrap();
+        .show_alert()?;
     while successful_auth.is_none() {
         // now we gotta poll this until it's authed.
         sleep(Duration::from_secs(response.interval));

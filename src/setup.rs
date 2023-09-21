@@ -1,6 +1,6 @@
 use super::Version;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures::future::try_join_all;
 use nanoserde::DeJson;
 use reqwest::Client as HttpClient;
@@ -74,7 +74,7 @@ pub async fn setup(version: Version, data_dir: PathBuf, client: HttpClient) -> R
 
     for result in results {
         let path = result?;
-        classpath.push_str(path.to_str().unwrap());
+        classpath.push_str(path.to_str().ok_or(anyhow!("unsupported path!"))?);
         classpath.push(separator);
     }
 
