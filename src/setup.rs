@@ -6,9 +6,9 @@ use nanoserde::DeJson;
 use reqwest::Client as HttpClient;
 use sha1_smol::Sha1;
 use std::collections::HashMap;
-use std::fs::{create_dir_all, File};
-use std::io::Write;
 use std::path::PathBuf;
+use tokio::fs::{create_dir_all, File};
+use tokio::io::AsyncWriteExt;
 
 pub async fn setup(version: Version, data_dir: PathBuf, client: HttpClient) -> Result<String> {
     let version_data: VersionData =
@@ -97,9 +97,9 @@ pub async fn setup(version: Version, data_dir: PathBuf, client: HttpClient) -> R
         .join("indexes")
         .join(format!("{}.json", version.id));
     if !path.exists() {
-        create_dir_all(data_dir.join("assets").join("indexes"))?;
-        let mut data_file = std::fs::File::create(path)?;
-        write!(data_file, "{}", asset_index_string)?;
+        create_dir_all(data_dir.join("assets").join("indexes")).await?;
+        let mut data_file = File::create(path).await?;
+        data_file.write(asset_index_string.as_bytes()).await?;
     }
 
     for (_, data) in asset_index.objects {
@@ -146,7 +146,7 @@ async fn download(
     println!("downloading file: {} -> {}", url, path.display());
     let full_path = path.clone();
     path.pop();
-    create_dir_all(path)?;
+    create_dir_all(path).await?;
     let bytes = client.get(&url).send().await?.bytes().await?;
     drop(client);
     hasher.update(&bytes);
@@ -156,8 +156,8 @@ async fn download(
         "{} failed integrity check.",
         url
     );
-    let mut new_file = File::create(&full_path)?;
-    new_file.write_all(&bytes)?;
+    let mut new_file = File::create(&full_path).await?;
+    new_file.write_all(&bytes).await?;
     Ok(full_path)
 }
 

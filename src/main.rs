@@ -2,9 +2,9 @@ mod auth;
 mod setup;
 
 use anyhow::Result;
-use std::fs;
-use std::io::Write;
 use std::process::Command;
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 use nanoserde::{DeJson, SerJson};
 
@@ -48,7 +48,9 @@ async fn main() -> Result<()> {
 
     // this panics because we need a directory.
     let project_dir = directories::ProjectDirs::from("", "piuvas", "smol launcher").unwrap();
-    let data = fs::read_to_string(project_dir.data_dir().join("data.json")).unwrap_or_default();
+    let data = fs::read_to_string(project_dir.data_dir().join("data.json"))
+        .await
+        .unwrap_or_default();
     let mut app_data: AppData = DeJson::deserialize_json(&data).unwrap_or_default();
 
     let data_dir = project_dir.data_dir();
@@ -86,15 +88,17 @@ async fn main() -> Result<()> {
         .expect("we should already have a classpath by now!!!");
 
     //let's write that data back.
-    fs::create_dir_all(project_dir.data_dir())?;
+    fs::create_dir_all(project_dir.data_dir()).await?;
     let data_file_path = project_dir.data_dir().join("data.json");
-    let mut data_file = fs::File::create(data_file_path)?;
-    write!(data_file, "{}", app_data.serialize_json())?;
+    let mut data_file = fs::File::create(data_file_path).await?;
+    data_file
+        .write(app_data.serialize_json().as_bytes())
+        .await?;
 
     // makes sure there's a minecraft folder.
     let dot_minecraft = data_dir.join(".minecraft");
     if !dot_minecraft.exists() {
-        fs::create_dir(dot_minecraft)?;
+        fs::create_dir(dot_minecraft).await?;
     }
 
     // starts the game!
