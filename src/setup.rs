@@ -35,20 +35,20 @@ pub async fn setup(version: Version, data_dir: PathBuf, client: HttpClient) -> R
             .join("libraries")
             .join(library.downloads.artifact.path);
         // either there's no os rule or it's the same as current os.
-        if !path.exists()
-            && (library.rules.is_none() || library.rules.is_some_and(|x| x[0].os.name == os))
-        {
-            let client = client.clone();
-            futures.push(tokio::spawn(download(
-                library.downloads.artifact.url,
-                library.downloads.artifact.sha1,
-                path,
-                client,
-            )));
-        } else {
-            let path_string = path.display();
-            classpath.push_str(&path_string.to_string());
-            classpath.push(separator);
+        if library.rules.is_none() || library.rules.is_some_and(|x| x[0].os.name == os) {
+            if !path.exists() {
+                let client = client.clone();
+                futures.push(tokio::spawn(download(
+                    library.downloads.artifact.url,
+                    library.downloads.artifact.sha1,
+                    path,
+                    client,
+                )));
+            } else {
+                let path_string = path.display();
+                classpath.push_str(&path_string.to_string());
+                classpath.push(separator);
+            }
         }
     }
 
