@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
     let data_file_path = project_dir.data_dir().join("data.json");
     let mut data_file = fs::File::create(data_file_path).await?;
     data_file
-        .write(app_data.serialize_json().as_bytes())
+        .write_all(app_data.serialize_json().as_bytes())
         .await?;
 
     // makes sure there's a minecraft folder.

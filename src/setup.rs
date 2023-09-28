@@ -99,7 +99,7 @@ pub async fn setup(version: Version, data_dir: PathBuf, client: HttpClient) -> R
     if !path.exists() {
         create_dir_all(data_dir.join("assets").join("indexes")).await?;
         let mut data_file = File::create(path).await?;
-        data_file.write(asset_index_string.as_bytes()).await?;
+        data_file.write_all(asset_index_string.as_bytes()).await?;
     }
 
     for (_, data) in asset_index.objects {
