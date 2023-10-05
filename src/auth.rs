@@ -157,10 +157,13 @@ async fn device_flow(client: Client) -> Result<DeviceSuccess> {
             response.verification_uri, response.user_code
         ))
         .show_alert()?;
-    while successful_auth.is_none() {
+
+    let mut polls = 1;
+
+    while successful_auth.is_none() && polls <= 10 {
         // now we gotta poll this until it's authed.
         sleep(Duration::from_secs(response.interval));
-        println!("polling...");
+        println!("polling... ({}/10)", polls);
         let response = client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
             .form(&[
@@ -170,25 +173,27 @@ async fn device_flow(client: Client) -> Result<DeviceSuccess> {
             ])
             .send()
             .await?;
-        // if the user is successfully authenticated.
         match response.status() {
+            // if the user is successfully authenticated.
             StatusCode::OK => {
                 println!("authenticated to microsoft!");
                 successful_auth = DeJson::deserialize_json(&response.text().await?)?;
             }
-            StatusCode::FORBIDDEN => {
+            StatusCode::BAD_REQUEST => {
                 let response: DeviceError = DeJson::deserialize_json(&response.text().await?)?;
                 match response.error {
+                    // hasn't authed.
                     AuthError::AuthorizationPending => {}
+                    // misc error. whoops...
                     _ => return Err(anyhow!("error authenticating to microsoft.")),
                 }
             }
-            _ => return Err(anyhow!("error authenticating to microsoft.")),
+            _ => return Err(anyhow!("status: {}", response.status())),
         }
+        polls += 1;
     }
 
-    // this unwraps because it must be Some().
-    Ok(successful_auth.unwrap())
+    successful_auth.ok_or_else(|| anyhow!("timed out."))
 }
 
 // microsoft stuff.
