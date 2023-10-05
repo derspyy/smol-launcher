@@ -30,9 +30,9 @@ pub async fn auth(
             ])
             .send()
             .await;
-        match refresh_response {
+        match DeJson::deserialize_json(&refresh_response?.text().await?) {
             Ok(response) => {
-                microsoft_auth = DeJson::deserialize_json(&response.text().await?)?;
+                microsoft_auth = response;
             }
             Err(_) => microsoft_auth = device_flow(client.clone()).await?,
         }
