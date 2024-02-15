@@ -145,8 +145,8 @@ async fn download(
     println!("downloading file: {} -> {}", url, path.display());
     let full_path = path.clone();
     path.pop();
-    create_dir_all(path).await?;
     let _permit = PERMITS.acquire().await?;
+    create_dir_all(path).await?;
     let bytes = client.get(&url).send().await?.bytes().await?;
     drop(client);
     hasher.update(&bytes);
