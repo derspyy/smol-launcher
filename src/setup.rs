@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::fs::{create_dir_all, File};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Semaphore;
+
+static PERMITS: Semaphore = Semaphore::const_new(100);
 
 pub async fn setup(version: Version, data_dir: PathBuf, client: HttpClient) -> Result<String> {
     let version_data: VersionData =
@@ -124,10 +127,6 @@ pub async fn setup(version: Version, data_dir: PathBuf, client: HttpClient) -> R
     for (url, hash, path, client) in inputs {
         let handle = tokio::spawn(download(url, hash, path, client));
         handles.push(handle);
-        if handles.len() == 1000 {
-            try_join_all(&mut handles).await?;
-            handles.clear();
-        }
     }
     try_join_all(handles).await?;
 
@@ -147,6 +146,7 @@ async fn download(
     let full_path = path.clone();
     path.pop();
     create_dir_all(path).await?;
+    let _permit = PERMITS.acquire().await?;
     let bytes = client.get(&url).send().await?.bytes().await?;
     drop(client);
     hasher.update(&bytes);
