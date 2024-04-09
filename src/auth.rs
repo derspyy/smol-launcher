@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use keyring::Entry;
 use nanoserde::{DeJson, SerJson};
 use native_dialog::{MessageDialog, MessageType};
 use reqwest::{Client, StatusCode};
@@ -11,14 +12,12 @@ const APPLICATION_ID: &str = "e8eab6e8-494c-4c9c-a800-2836b8468fda";
 // https://wiki.vg/Microsoft_Authentication_Scheme
 // this is hell.
 
-pub async fn auth(
-    refresh_token: Option<String>,
-    client: Client,
-) -> Result<(String, String, String, String)> {
+pub async fn auth(client: Client) -> Result<(String, String, String)> {
     let microsoft_auth: DeviceSuccess;
-
+    let entry = Entry::new(env!("CARGO_PKG_NAME"), "refresh_token")?;
+    let refresh_token = entry.get_password();
     // if there's a refresh token (most likely).
-    if let Some(token) = refresh_token {
+    if let Ok(token) = refresh_token {
         println!("refresh token found.");
         let refresh_response = client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
@@ -39,6 +38,7 @@ pub async fn auth(
     } else {
         println!("no refresh token present. :/");
         microsoft_auth = device_flow(client.clone()).await?;
+        entry.set_password(&microsoft_auth.refresh_token)?;
     }
 
     // most of this is annoying xbox auth.
@@ -125,7 +125,6 @@ pub async fn auth(
         profile_data.name,
         profile_data.id,
         minecraft_auth.access_token,
-        microsoft_auth.refresh_token,
     ))
 }
 

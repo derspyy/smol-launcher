@@ -47,7 +47,6 @@ async fn main() -> Result<()> {
     }
     let version = minecraft_version.expect("no minecraft version??");
     println!("version: {}.", version_string);
-
     // this panics because we need a directory.
     let project_dir = directories::ProjectDirs::from("", "piuvas", "smol launcher").unwrap();
     let data = fs::read_to_string(project_dir.data_dir().join("data.json"))
@@ -76,9 +75,7 @@ async fn main() -> Result<()> {
     }
 
     // authenticates for the launcher data.
-    let (username, uuid, access_token, refresh_token) =
-        auth::auth(app_data.refresh_token, client).await?;
-    app_data.refresh_token = Some(refresh_token);
+    let (username, uuid, access_token) = auth::auth(client).await?;
 
     if let Some(handle) = setup_handle {
         app_data.classpath = Some(handle.await.unwrap()?);
@@ -175,5 +172,4 @@ pub struct Version {
 struct AppData {
     versions: Vec<String>,
     classpath: Option<String>,
-    refresh_token: Option<String>,
 }
