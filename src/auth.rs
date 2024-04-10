@@ -12,19 +12,21 @@ const APPLICATION_ID: &str = "e8eab6e8-494c-4c9c-a800-2836b8468fda";
 // https://wiki.vg/Microsoft_Authentication_Scheme
 // this is hell.
 
-pub async fn auth(client: Client) -> Result<(String, String, String)> {
+pub async fn auth(client: Client, uuid: Option<String>) -> Result<(String, String, String)> {
     let microsoft_auth: DeviceSuccess;
-    let entry = Entry::new(env!("CARGO_PKG_NAME"), "refresh_token")?;
-    let refresh_token = entry.get_password();
-    // if there's a refresh token (most likely).
-    if let Ok(token) = refresh_token {
+    // if there's a uuid (most likely).
+    let mut refresh_token: String;
+    let mut refresh_token_changed = false;
+    if let Some(id) = &uuid {
+        let entry = Entry::new(env!("CARGO_PKG_NAME"), &id)?;
+        refresh_token = entry.get_password()?;
         println!("refresh token found.");
         let refresh_response = client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
             .form(&[
                 ("client_id", APPLICATION_ID),
                 ("scope", "XboxLive.signin offline_access"),
-                ("refresh_token", &token),
+                ("refresh_token", &refresh_token),
                 ("grant_type", "refresh_token"),
             ])
             .send()
@@ -33,12 +35,17 @@ pub async fn auth(client: Client) -> Result<(String, String, String)> {
             Ok(response) => {
                 microsoft_auth = response;
             }
-            Err(_) => microsoft_auth = device_flow(client.clone()).await?,
+            Err(_) => {
+                microsoft_auth = device_flow(client.clone()).await?;
+                refresh_token = microsoft_auth.refresh_token;
+                refresh_token_changed = true;
+            }
         }
     } else {
         println!("no refresh token present. :/");
         microsoft_auth = device_flow(client.clone()).await?;
-        entry.set_password(&microsoft_auth.refresh_token)?;
+        refresh_token = microsoft_auth.refresh_token;
+        refresh_token_changed = true;
     }
 
     // most of this is annoying xbox auth.
@@ -119,6 +126,11 @@ pub async fn auth(client: Client) -> Result<(String, String, String)> {
             .await?,
     )?;
 
+    // save refresh token.
+    if refresh_token_changed {
+        let entry = Entry::new(env!("CARGO_PKG_NAME"), &profile_data.id)?;
+        entry.set_password(&refresh_token)?;
+    }
     println!("logged in as {}.", profile_data.name);
 
     Ok((

@@ -75,7 +75,8 @@ async fn main() -> Result<()> {
     }
 
     // authenticates for the launcher data.
-    let (username, uuid, access_token) = auth::auth(client).await?;
+    let (username, uuid, access_token) = auth::auth(client, app_data.user_uuid).await?;
+    app_data.user_uuid = Some(uuid.clone());
 
     if let Some(handle) = setup_handle {
         app_data.classpath = Some(handle.await.unwrap()?);
@@ -172,4 +173,5 @@ pub struct Version {
 struct AppData {
     versions: Vec<String>,
     classpath: Option<String>,
+    user_uuid: Option<String>,
 }
