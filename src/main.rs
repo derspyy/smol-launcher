@@ -15,7 +15,7 @@ const MOJANG_META: &str = "https://piston-meta.mojang.com/mc/game/version_manife
 #[tokio::main]
 async fn main() -> Result<()> {
     // setup http client.
-    println!("setting up ureq.");
+    println!("setting up reqwest.");
     let client = reqwest::Client::builder()
         .user_agent(concat!(
             env!("CARGO_PKG_NAME"),
